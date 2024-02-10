@@ -1,101 +1,159 @@
-/*  
-  OpenMQTTGateway Addon  - ESP8266 or Arduino program for home automation 
+/*
 
-   Act as a wifi or ethernet gateway between your 433mhz/infrared IR signal  and a MQTT broker 
-   Send and receiving command by MQTT
- 
-    INA226 reading Addon
-  
-    From the orgiginal work of Matthias Busse http://shelvin.de/ein-batteriemonitor-fuer-strom-und-spannung-mit-dem-ina226-und-dem-arduino-uno/
-    MQTT add - 1technophile
-    
-    Contributors:
-    - 1technophile
-  
-    This file is part of OpenMQTTGateway.
-    
-    OpenMQTTGateway is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
+    Based on INA226 Bi-directional Current/Power Monitor. Simple Example.
+    Read more: http://www.jarzebski.pl/arduino/czujniki-i-sensory/cyfrowy-czujnik-pradu-mocy-ina226.html
+    GIT: https://github.com/jarzebski/Arduino-INA226
+    Web: http://www.jarzebski.pl
+    (c) 2014 by Korneliusz Jarzebski
 
-    OpenMQTTGateway is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
+    Adapted for use with OpenMQTTgateway 2024 Kjetilsn
+    Configure I2C hardware address for INA226 in library INA226.h, and set I2C pins if required in INA226.cpp
+    Tested with INA226 library version 1.1.0
 
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 */
-// Pinout
-// INA226 - Uno - Mega - NODEMCU
-// SCL    - A5  - 21 - D1
-// SDA    - A4  - 20 - D2
-//
+
+
+
 #include "User_config.h"
 
 #ifdef ZsensorINA226
 #  include <Wire.h>
+#  include <INA226.h>
 
-float rShunt = 0.1; // Shunt Widerstand festlegen, hier 0.1 Ohm
-const int INA226_ADDR = 0x40; // A0 und A1 auf GND > Adresse 40 Hex auf Seite 18 im Datenblatt
+// User configuration: 
+// Configure you shunt resistance and measurement range below for INA config and calibraiton, see datasheet for details.
 
-//Time used to wait for an interval before resending temp and hum
+float rShunt = 0.0015; // Shunt Resistance i.e: 0.1 Ohm, or calculated from rating: 200A, 75mV shunt equals 0,075 / 200 = 0,000375 Ohm
+float maxA = 50; // Upper measurement limit. i.e: Shunt rating is 200A, but actual required range is less, ie 20 providing better resolution.
+
+// Configure how measurment schedule in config_INA226_h
+// Time used to wait for an interval before resending, default 0
 unsigned long timeINA226 = 0;
 
-void setupINA226() {
-  Wire.begin();
-  // Configuration Register Standard Einstellung 0x4127, hier aber 16 Werte Mitteln > 0x4427
-  writeRegister(0x00, 0x4427); // 1.1ms Volt und Strom A/D-Wandlung, Shunt und VBus continous
+
+INA226 ina;
+
+void checkConfig()
+{
+  Serial.print("Mode:                  ");
+  switch (ina.getMode())
+  {
+    case INA226_MODE_POWER_DOWN:      Serial.println("Power-Down"); break;
+    case INA226_MODE_SHUNT_TRIG:      Serial.println("Shunt Voltage, Triggered"); break;
+    case INA226_MODE_BUS_TRIG:        Serial.println("Bus Voltage, Triggered"); break;
+    case INA226_MODE_SHUNT_BUS_TRIG:  Serial.println("Shunt and Bus, Triggered"); break;
+    case INA226_MODE_ADC_OFF:         Serial.println("ADC Off"); break;
+    case INA226_MODE_SHUNT_CONT:      Serial.println("Shunt Voltage, Continuous"); break;
+    case INA226_MODE_BUS_CONT:        Serial.println("Bus Voltage, Continuous"); break;
+    case INA226_MODE_SHUNT_BUS_CONT:  Serial.println("Shunt and Bus, Continuous"); break;
+    default: Serial.println("unknown");
+  }
+  
+  Serial.print("Samples average:       ");
+  switch (ina.getAverages())
+  {
+    case INA226_AVERAGES_1:           Serial.println("1 sample"); break;
+    case INA226_AVERAGES_4:           Serial.println("4 samples"); break;
+    case INA226_AVERAGES_16:          Serial.println("16 samples"); break;
+    case INA226_AVERAGES_64:          Serial.println("64 samples"); break;
+    case INA226_AVERAGES_128:         Serial.println("128 samples"); break;
+    case INA226_AVERAGES_256:         Serial.println("256 samples"); break;
+    case INA226_AVERAGES_512:         Serial.println("512 samples"); break;
+    case INA226_AVERAGES_1024:        Serial.println("1024 samples"); break;
+    default: Serial.println("unknown");
+  }
+
+  Serial.print("Bus conversion time:   ");
+  switch (ina.getBusConversionTime())
+  {
+    case INA226_BUS_CONV_TIME_140US:  Serial.println("140uS"); break;
+    case INA226_BUS_CONV_TIME_204US:  Serial.println("204uS"); break;
+    case INA226_BUS_CONV_TIME_332US:  Serial.println("332uS"); break;
+    case INA226_BUS_CONV_TIME_588US:  Serial.println("558uS"); break;
+    case INA226_BUS_CONV_TIME_1100US: Serial.println("1.100ms"); break;
+    case INA226_BUS_CONV_TIME_2116US: Serial.println("2.116ms"); break;
+    case INA226_BUS_CONV_TIME_4156US: Serial.println("4.156ms"); break;
+    case INA226_BUS_CONV_TIME_8244US: Serial.println("8.244ms"); break;
+    default: Serial.println("unknown");
+  }
+
+  Serial.print("Shunt conversion time: ");
+  switch (ina.getShuntConversionTime())
+  {
+    case INA226_SHUNT_CONV_TIME_140US:  Serial.println("140uS"); break;
+    case INA226_SHUNT_CONV_TIME_204US:  Serial.println("204uS"); break;
+    case INA226_SHUNT_CONV_TIME_332US:  Serial.println("332uS"); break;
+    case INA226_SHUNT_CONV_TIME_588US:  Serial.println("558uS"); break;
+    case INA226_SHUNT_CONV_TIME_1100US: Serial.println("1.100ms"); break;
+    case INA226_SHUNT_CONV_TIME_2116US: Serial.println("2.116ms"); break;
+    case INA226_SHUNT_CONV_TIME_4156US: Serial.println("4.156ms"); break;
+    case INA226_SHUNT_CONV_TIME_8244US: Serial.println("8.244ms"); break;
+    default: Serial.println("unknown");
+  }
+  
+  Serial.print("Max possible current:  ");
+  Serial.print(ina.getMaxPossibleCurrent());
+  Serial.println(" A");
+
+  Serial.print("Max current:           ");
+  Serial.print(ina.getMaxCurrent());
+  Serial.println(" A");
+
+  Serial.print("Max shunt voltage:     ");
+  Serial.print(ina.getMaxShuntVoltage());
+  Serial.println(" V");
+
+  Serial.print("Max power:             ");
+  Serial.print(ina.getMaxPower());
+  Serial.println(" W");
 }
 
+void setupINA226() 
+{
+  Serial.begin(115200);
+
+  Serial.println("Initialize INA226");
+  Serial.println("-----------------------------------------------");
+
+  // Default INA226 address is 0x40
+  ina.begin();
+
+  // Configure INA226
+  ina.configure(INA226_AVERAGES_1, INA226_BUS_CONV_TIME_1100US, INA226_SHUNT_CONV_TIME_1100US, INA226_MODE_SHUNT_BUS_CONT);
+
+  // Calibrate INA226
+  ina.calibrate(rShunt, maxA);
+
+  // Display configuration
+  checkConfig();
+
+  Serial.println("-----------------------------------------------");
+}
+
+
 void MeasureINA226() {
-  if (millis() > (timeINA226 + TimeBetweenReadingINA226)) { //retrieving value of temperature and humidity of the box from DHT every xUL
+  if (millis() > (timeINA226 + TimeBetweenReadingINA226)) { 
     timeINA226 = millis();
+
     Log.trace(F("Creating INA226 buffer" CR));
     StaticJsonDocument<JSON_MSG_BUFFER> INA226dataBuffer;
     JsonObject INA226data = INA226dataBuffer.to<JsonObject>();
-    // Topic on which we will send data
+
     Log.trace(F("Retrieving electrical data" CR));
-    // Bus Spannung, read-only, 16Bit, 0...40.96V max., LSB 1.25mV
-    float volt = readRegister(0x02) * 0.00125;
-    // Seite 24: Shunt Spannung +- 81,92mV mit 16 Bit, LSB 2,5uV
-    int shuntvolt = readRegister(0x01);
-    if (shuntvolt && 0x8000) { // eine negative Zahl? Dann 2er Komplement bilden
-      shuntvolt = ~shuntvolt; // alle Bits invertieren
-      shuntvolt += 1; // 1 dazuzählen
-      shuntvolt *= -1; // negativ machen
-    }
-    float current = shuntvolt * 0.0000025 / rShunt; // * LSB / R
-    float power = abs(volt * current);
+   
+    float volt = ina.readBusVoltage();
+    float current = ina.readShuntCurrent(); 
+    float power = ina.readBusPower();
+    float shuntvolt = ina.readShuntVoltage();
 
     INA226data["volt"] = volt;
     INA226data["current"] = current;
     INA226data["power"] = power;
+    INA226data["shuntvolt"] = shuntvolt;
     INA226data["origin"] = subjectINA226toMQTT;
-    handleJsonEnqueue(INA226data);
-  }
-}
+    handleJsonEnqueue(INA226data);    
 
-static void writeRegister(byte reg, word value) {
-  Wire.beginTransmission(INA226_ADDR);
-  Wire.write(reg);
-  Wire.write((value >> 8) & 0xFF);
-  Wire.write(value & 0xFF);
-  Wire.endTransmission();
+ }
 }
-
-static word readRegister(byte reg) {
-  word res = 0x0000;
-  Wire.beginTransmission(INA226_ADDR);
-  Wire.write(reg);
-  if (Wire.endTransmission() == 0) {
-    if (Wire.requestFrom(INA226_ADDR, 2) >= 2) {
-      res = Wire.read() * 256;
-      res += Wire.read();
-    }
-  }
-  return res;
-}
-
 #endif
