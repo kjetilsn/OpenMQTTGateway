@@ -6,7 +6,7 @@
     Web: http://www.jarzebski.pl
     (c) 2014 by Korneliusz Jarzebski
 
-    Adapted for use with OpenMQTTgateway 2024 Kjetilsn
+    Adapted for use with OpenMQTTgateway
     Configure I2C hardware address for INA226 in library INA226.h, and set I2C pins if required in INA226.cpp
     Tested with INA226 library version 1.1.0
 
